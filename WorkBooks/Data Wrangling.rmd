@@ -1,0 +1,155 @@
+---
+
+title: "NFL Kaggle"
+author: "Judah Drelich"
+date: "January 7, 2021"
+output:
+editor_options: 
+chunk_output_type: inline
+---
+
+```{r Loading Packages}
+# Installing packages and Loading Libraries----
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(gganimate)
+library(chron)
+library(reprex)
+library(tibble)
+library(gifski)
+library(png)
+library(tidytable)
+library(tidyr)
+library(lubridate)
+library(bazar)
+library(av)
+library(lmtest)
+library(sandwich)
+library(scales)
+library(fastDummies)
+library(transformr)
+library(utils)
+```
+
+```{r Loading data}
+# Load in games that has teams and week
+games <- read.csv("data/games.csv")
+# Load in Players that has info on all the players
+players <- read.csv("data/players.csv")
+# Description of each play and other characteristics
+plays <- read.csv("data/plays.csv")
+# Create a progress bar for the loop
+pb <- txtProgressBar(min = 0, max = 17, initial = 0)
+# Iterate through all the 17 weeks
+for (i in 1:17){
+    # set the progress bar  
+  setTxtProgressBar(pb, i)
+  # store the current loop's week in the variable week
+  week <- read.csv(paste0("data/week", i, ".csv"))
+  # save the week as weeki where i is the iteration of the loop
+  assign(paste0("week", i), week)
+}
+```
+
+Since players were reaching speeds of 40+ yds/s which is ~ 80 mph it was clear that this was not real data that anything could be gleaned from.
+```{r Clean up}
+
+week7 <- subset(week7, playId != 3078)
+plays <- plays[-c(4330, 7735), ]
+week4 <- subset(week4, playId != 58)
+week7 <- subset(week7, playId != 2687)
+# Reset the rownames so that the previous clean up didn't matter
+row.names(plays) <- NULL
+```
+
+Getting the time in the game
+```{r Time in Game}
+#----
+plays <- separate(plays,
+                  playDescription,
+                  c("gametime", "playDescription"),
+                  sep = " ",
+                  extra = "merge")
+
+plays$gametime <- gsub("\\(", "", plays$gametime)
+plays$gametime <- gsub("\\)", "", plays$gametime)
+
+plays$gametime <- paste0(0, plays$gametime)
+nonatime <- as.period(ms(plays$gametime), unit = "sec")
+
+quarterspast <- c()
+pb <- txtProgressBar(min = 0, max = nrow(plays), initial = 0)
+for (i in seq_len(nrow(plays))){
+  setTxtProgressBar(pb, i)
+  if (plays$quarter[i] == 5) {
+    plays$timeingame[i] <- 3600 + abs(nonatime[i] - 600)
+  } else {
+    quarterspast[i] <- (plays$quarter[i] - 1) * 900
+    plays$timeingame[i] <- quarterspast[i] + abs(nonatime[i] - 900)
+  }
+}
+
+for (i in seq_len(length(plays$gametime))){
+  if (nchar(plays$gametime[i]) == 6) {
+    plays$gametime[i] <- substring(plays$gametime[i], 2)
+  }
+}
+```
+
+```{r Fixing the Heights}
+
+
+players$height <- as.character(players$height)
+players$height2 <- players$height
+players <- separate(players, height2, c("feet", "inches"), "-")
+players$feet <- as.numeric(players$feet)
+players$inches <- as.numeric(players$inches)
+for (i in seq_len(nrow(players))) {
+  if (!is.na(players$inches[i])) {
+    players$height[i] <- players$feet[i] * 12 + players$inches[i]
+}
+}
+players$height <- as.numeric(players$height)
+
+players <- players[, -c(8, 9)]
+```
+
+```{r Separating Offense, Defense and Play Action}
+#Discarding Non Standard packages----
+standardoplays <- plays
+standarddplays <- plays
+
+offense <- c("QB", "RB", "WR", "TE", "oL")
+dst <- c("p", "K", "DL", "DB", "LB", "2 QB")
+for (pos in dst) {
+  standardoplays <- as.data.frame(subset(standardoplays,
+                                  grepl(pos, standardoplays$personnelO) == 0))
+}
+for (pos in offense){
+  standarddplays <- as.data.frame(subset(standarddplays,
+                                  grepl(pos, standarddplays$personnelD) == 0))
+}
+
+standardplays <- intersect(standardoplays, standarddplays)
+
+#only planned throws
+normalpassplay <- c("TRADITIoNAL", "SCRAMBLE_RoLLoUT_LEFT",
+                    "SCRAMBLE_RoLLoUT_RIGHT", "SCRAMBLE")
+
+desroll <- c("DESIGNED_RoLLoUT_RIGHT", "DESIGNED_RoLLoUT_LEFT")
+
+#Standard pass plays no pass interference with no designed roll-out
+spnor <- filter(standardplays, typeDropback %in% normalpassplay)
+
+
+spnpnor <- filter(standardplays,
+                  isDefensivePI == FALSE & typeDropback %in% normalpassplay)
+
+
+#Rollout plays
+
+drplays <- filter(standardplays, typeDropback %in% desroll)
+```

@@ -1,0 +1,1202 @@
+
+---
+NFL Kaggle Ideas
+---
+
+--- Always Run on starting this project
+
+Installing Packages and Loading Libraries
+```{r Importing Packages} 
+#Installing Packages and Loading Libraries---- 
+
+library(ggplot2)
+library(plyr)
+library(dplyr)
+library(tidyverse)
+library(magrittr)
+library(gganimate)
+library(chron)
+library(reprex)
+library(tibble)
+library(gifski)
+library(png)
+library(tidytable)
+library(tidyr)
+library(lubridate)
+library(bazar)
+library(av)
+library(lmtest)
+library(sandwich)
+```
+
+Loading and Scanning Data sets
+```{r Loading the Data}   
+#Loading and Scanning Data sets----
+Games <- read.csv('games.csv')
+Players <- read.csv('players.csv')
+Plays <- read.csv('plays.csv')
+pb <- txtProgressBar(min = 0, max = 17, initial = 0)
+for (i in 1:17) {
+  setTxtProgressBar(pb, i)
+  week <- read.csv(paste0("week", i, ".csv"))
+  assign(paste0("week", i), week)
+}
+```
+
+
+Putting all the weeks together
+```{r} 
+# Combining all the weeks ----
+allweeks <- c()
+for (i in 1:17){
+  allweeks <- rbind(allweeks, get(paste0("week", i)))
+}
+```
+
+```{r}
+#Fixing the Heights----
+
+Players$height <- as.character(Players$height)
+Players$height2 <- Players$height
+Players <- separate(Players, height2, c("feet", "inches"), "-")
+Players$feet <- as.numeric(Players$feet)
+Players$inches <- as.numeric(Players$inches)
+for (i in 1:nrow(Players)) {
+  if (!is.na(Players$inches[i])){
+    Players$height[i] <- Players$feet[i] * 12 + Players$inches[i]
+}
+}
+Players$height <- as.numeric(Players$height)
+Players <- Players[, -c(8, 9)]
+
+```
+
+Getting the time in the game
+```{r}
+#Time in Game----
+Plays <- read.csv('plays.csv')
+
+
+Plays <- separate(Plays,
+                  playDescription,
+                  c("gametime", "playDescription"),
+                  sep = " ",
+                  extra = "merge")
+
+Plays$gametime <- gsub("\\(", "", Plays$gametime)
+Plays$gametime <- gsub("\\)", "", Plays$gametime)
+
+Plays$gametime <- paste0(0,Plays$gametime)
+nonatime <- as.period(ms(Plays$gametime), unit = "sec")
+
+quarterspast <- c()
+pb <- txtProgressBar(min = 0, max = nrow(Plays), initial = 0)
+for (i in 1:nrow(Plays)){
+  setTxtProgressBar(pb, i)
+  if (Plays$quarter[i] == 5) {
+    Plays$timeingame[i] <- 3600 + abs(nonatime[i] - 600)
+  } else {
+    quarterspast[i] <- (Plays$quarter[i]-1) * 900
+    Plays$timeingame[i] <- quarterspast[i] + abs(nonatime[i] - 900)
+  }
+}
+
+for (i in 1:length(Plays$gametime)){
+  if (nchar(Plays$gametime[i]) == 6) {
+    Plays$gametime[i] <- substring(Plays$gametime[i], 2)
+  }
+}
+```
+
+
+Since players were reaching speeds of 40+ yds/s which is ~ 80 mph it was clear that this was not real data that anything could be gleaned from. 
+```{r}
+#Clean up ----
+week7 <- subset(week7, playId != 3078)
+Plays <- Plays[-7735, ]
+```
+
+
+Creating the Plot
+```{r}   
+#Play Plotter ----
+  # This function takes a number and corresponds it to one of the plays 
+  # in the database
+footballplaydiagram <- function(n) {
+  offense <- c("FB", "HB", "RB", "TE",  "WR")
+  nums <- c("10", "20", "30", "40", "50", "40", "30", "20", "10")
+  yardlines <- seq(20,100, by = 10)
+  #figuring out which week the play is in
+  w <- Games[which(Games$gameId == Plays[n, 1]), 6]
+  #obtaining all of the data for the play from week"w"'s dataset
+  pd <- subset(get(paste0("week", w)),
+                    playId == Plays[n, 2] & gameId == Plays[n, 1])
+  #Find the throw frame to be able to look at the defense then
+  if ("pass_forward" %in% pd$event) {
+    throwframe <- pd[which(pd$event == "pass_forward"), 14]
+    throwframeId <- throwframe[1]
+  } else {
+     throwframeId <- max(pd$frameId)
+  }
+  #Finding the Line of Scrimmage x-value
+  los <- as.numeric(pd[which(pd$displayName == "Football" &
+                       pd$frameId == 1), 2]) %>% round() %>% as.integer()
+  #Cut down on run time
+  offonfield <- intersect(offense, pd$position)
+  #Find an Offensive Player
+  for (i in 1:22){
+   if (pd$position[i] %in% offonfield) {
+    oplayer <- pd$displayName[i]
+   }}
+  #Finding the First down x-value
+  if (pd[which(pd$displayName == oplayer & pd$frameId == 1), 2] > los) {
+  fd <- los - Plays[n, 7]
+} else {
+  fd <- los + Plays[n, 7]
+}
+  #differentiating home and away so we can give the points different colors
+  hteam <- as.character(Games[which(Games$gameId == pd$gameId[1]), 4])
+  ateam <- as.character(Games[which(Games$gameId == pd$gameId[1]), 5])
+   formation <- ggplot(pd, aes(x,y, color = team)) +
+                  #Putting the Numbers on the Field
+                  annotate("text", label = nums, x = yardlines, y = 5,
+                            size = 5, color = "white", fontface = "bold") +
+                  annotate("text", label = nums, x = yardlines, y = 48,
+                           size = 5, color = "white", fontface = "bold") +
+                  #Creating the Endzones
+                  geom_rect(aes(xmin = 0, xmax = 10, ymin = 0, ymax = 53.3),
+                               color = "white") +
+                  geom_rect(aes(xmin = 110, xmax = 120, ymin = 0, ymax = 53.3),
+                               color = "white") +
+                  #Creating the Out of Bounds
+                  geom_rect(aes(xmin = 0, xmax = 120, ymin = 53.3, ymax = 59.3),
+                               fill = "white", color = "white") +
+                  geom_rect(aes(xmin = 0, xmax = 120, ymin = -15, ymax = 0),
+                               fill = "white", color = "white") +
+                  geom_rect(aes(xmin = -10, xmax = 0, ymin = -15, ymax = 59.3),
+                               fill = "white", color = "white") +
+                  geom_rect(aes(xmin = 120, xmax = 130, ymin = -15,
+                               ymax = 59.3), fill = "white", color = "white") +
+                  #Line of Scrimmage
+                  geom_segment(aes(x = los, y = 0, xend = los, yend = 53),
+                                   color = "blue") +
+                  #First Down Marker
+                  geom_segment(aes(x = fd, y = 0, xend = fd, yend = 53),
+                                   color = "yellow") +
+                  #Putting in the hashmarks
+                  annotate("segment", x = 10:110, xend = 10:110, y = 0.5,
+                           yend = 1.5, color = "white") +
+                  annotate("segment", x = 10:110, xend = 10:110, y = 51.8,
+                           yend = 52.8, color = "white") +
+                  annotate("segment", x = 10:110, xend = 10:110, y = 23.583333,
+                           yend = 24.583333, color = "white") +
+                  annotate("segment", x = 10:110, xend = 10:110, y = 29.75,
+                           yend = 30.75, color = "white") +
+                  #Players
+                  geom_label(data = filter(pd,
+                                          (team == "home" | team == "away") &
+                                           frameId == throwframeId),
+                     inherit.aes = FALSE,
+                     size = 3,
+                     aes(x, y, fill = factor(team), label = jerseyNumber),
+                     color = "white",
+                     fontface = "bold",
+                    show.legend = FALSE) +
+                  geom_point(data = filter(pd, team == "football" &
+                              frameId == throwframeId),
+                              color = "brown", size = 2) +
+                  ggtitle(paste(paste("Play:", n),
+                  paste(paste0("Q", Plays[n, 5]),
+                  Plays[n, 3], paste0(Plays[n, 6], "rd"), "and", Plays[n, 7],
+                  "   Off:", Plays[n, 8]), paste(ateam, Plays[n, 18],
+                  hteam, Plays[n, 19]),
+                  Plays[n, 4], sep = "\n")) +
+                  coord_fixed()
+
+    #Creating The football Field background
+    field <- theme(
+              plot.margin = unit(c(0, 0, 0, 0), "cm"),
+              axis.text = element_blank(),
+              axis.ticks.x = element_blank(),
+              axis.ticks.y = element_blank(),
+              axis.text.y = element_blank(),
+              axis.title = element_blank(),
+              plot.title = element_text(size = 13, face = "bold", hjust = 0.5),
+              panel.border = element_blank(),
+              panel.ontop = FALSE,
+              panel.grid.major.y = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(fill = "darkgreen"))
+
+      formation + field +
+
+      #yardmarkings and cropping the graph
+      scale_x_continuous(expand = c(0, 0),
+        breaks = seq(20, 100, 10)) +
+
+      scale_y_continuous(expand = c(0, 0))
+}
+```
+
+
+Play Runner Function
+```{r} 
+#Play Runner Function ----
+#This function takes a number and runs the corresponding play
+footballplay <- function(n) {
+  offense <- c("FB", "HB", "RB", "TE",  "WR")
+  #figuring out which week the play is in
+  w <- Games[which(Games$gameId == Plays[n, 1]), 6]
+  #obtaining all of the data for the play from week"w"'s dataset
+  pd <- subset(get(paste0("week",w)),
+                   playId == Plays[n, 2] & gameId == Plays[n, 1])
+  #Configuring the time to be able to play the animation
+  pd$time <- gsub("T", " ", pd$time)
+  pd$time <- gsub("Z", "", pd$time)
+  options(digits.secs = 6)
+  pd$time <- as.POSIXct(strptime(pd$time, "%Y-%m-%d %H:%M:%OS"))
+  #Finding the Line of Scrimmage 
+  los <- as.numeric(pd[which(pd$displayName == "Football" &
+                             pd$frameId == 1), 2]) %>% round() %>% as.integer()
+  #Cut down on run time
+  offonfield <- intersect(offense, pd$position)
+    #Find an Offensive Player
+  for (i in 1:22){
+   if (pd$position[i] %in% offonfield) {
+    oplayer <- pd$displayName[i]
+   }
+   }
+  #Finding the First down marker
+  if (pd[which(pd$displayName == oplayer & pd$frameId == 1), 2] > los) {
+  fd <- los - Plays[n, 7]
+} else {
+  fd <- los + Plays[n, 7]
+}
+  #differentiating home and away so we can get the score
+  hteam <- as.character(Games[which(Games$gameId == pd$gameId[1]), 4])
+  ateam <- as.character(Games[which(Games$gameId == pd$gameId[1]), 5])
+  #Setting up Numbers on the plot
+  nums <- c("10", "20", "30", "40", "50", "40", "30", "20", "10")
+  yardlines <- seq(20, 100, by = 10)
+   formation <- ggplot(pd, aes(x, y, color = team), size = 50) +
+                  #Putting the Numbers on the Field
+                  annotate("text", label = nums, x = yardlines, y = 5,
+                           size = 5, color = "white", fontface = "bold") +
+                  annotate("text", label = nums, x = yardlines, y = 48,
+                            size = 5, color = "white", fontface = "bold") +
+                  #Creating the Endzones
+                  geom_rect(aes(xmin = 0, xmax = 10, ymin = 0, ymax = 53.3),
+                                color = "white") +
+                  geom_rect(aes(xmin = 110, xmax = 120, ymin = 0,
+                                ymax = 53.3), color = "white") +
+                  #Creating the Out of Bounds
+                  geom_rect(aes(xmin = 0, xmax = 120, ymin = 53.3, ymax = 59.3),
+                                fill = "white", color = "white") +
+                  geom_rect(aes(xmin = 0, xmax = 120, ymin = -15, ymax = 0),
+                               fill = "white", color = "white") +
+                  geom_rect(aes(xmin = -10, xmax = 0, ymin = -15, ymax = 59.3),
+                               fill = "white", color = "white") +
+                  geom_rect(aes(xmin = 120, xmax = 130, ymin = -15,
+                               ymax = 59.3), fill = "white", color = "white") +
+                  #Putting in the hashmarks
+                  annotate("segment", x = 10:110, xend = 10:110, y = 0.5,
+                           yend = 1.5, color = "white") +
+                  annotate("segment", x = 10:110, xend = 10:110, y = 51.3,
+                            yend = 52.3, color = "white") +
+                  annotate("segment", x = 10:110, xend = 10:110, y = 23.583333,
+                           yend = 24.583333, color = "white") +
+                  annotate("segment", x = 10:110, xend = 10:110, y = 29.75,
+                            yend = 30.75, color = "white") +
+                  #Line of Scrimmage marker
+                  geom_segment(aes(x = los, y = 0, xend = los,
+                                  yend = 53), color = "blue") +
+                  #First down Marker
+                  geom_segment(aes(x = fd, y = 0, xend = fd, yend = 53),
+                                   color = "yellow") +
+
+                  #The Players
+                  geom_label(data = filter(pd, team == "home" | team == "away"),
+                             inherit.aes = FALSE,
+                             size = 3,
+                             aes(x, y, fill = factor(team),
+                                 label = jerseyNumber),
+                             color = "white",
+                             fontface = "bold",
+                             show.legend = FALSE) +
+                  #The Football
+                  geom_point(data = filter(pd, team == "football"),
+                             color = "brown", size = 2) +
+                  #The Animation
+                  transition_states(time, state_length = 2) +
+                    shadow_wake(wake_length = 0.01, alpha = .5) +
+                  ggtitle(paste(paste("Play:", n),
+                                paste(paste0("Q", Plays[n, 5]),
+                                Plays[n, 3], paste0(Plays[n, 6], "rd"),
+                                "and", Plays[n, 7], "   Off:", Plays[n, 8]),
+                                paste(ateam, Plays[n, 18], hteam, Plays[n, 19]),
+                                Plays[n, 4], sep = "\n")) +
+                  coord_fixed()
+
+    #Creating The football Field background
+    field <- theme(
+              plot.margin = unit(c(0, 0, 0, 0), "cm"),
+              axis.text = element_blank(),
+              axis.ticks.x = element_blank(),
+              axis.ticks.y = element_blank(),
+              axis.text.y = element_blank(),
+              axis.title = element_blank(),
+              plot.title = element_text(size = 13, face = "bold", hjust = 0.5),
+              panel.border = element_blank(),
+              panel.ontop = FALSE,
+              panel.grid.major.y = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(fill = "darkgreen"))
+    
+    animate(formation + field +
+        scale_x_continuous(
+          expand = c(0, 0),
+          breaks = seq(20, 100, 10)) +
+        scale_y_continuous(expand = c(0, 0)),
+        renderer = av_renderer(),
+        fps = 20,
+        nframes = floor(450 * nrow(pd) / 2835),
+        height = 500,
+        width = 800)
+}
+View(week1)
+```
+---
+
+
+  While the old proverb "defense wins championships" has proved prophetic for much of the NFL's existence, rule changes have outlawed many of the most dangerous 
+  and intimidating hits. Those hits impacted not only on the plays that they happened, but they prevented offensive ideas from ever being called. Without these hits
+  defenses are tested in their coverage capabilities now more than ever. To combat this we need to examine the best possible coverages given the data and find possible
+  advantages.
+  
+  To find advantages in coverage schemes, it would make sense to first separate the plays into Man vs. Man or Zone. In Man coverage the idea is that each defender 
+  sticks to his man as close as possible, while the rest of the defenders either rush the Quarterback (QB) or help out with the defenders guarding their man. In zone 
+  each defender who isn't rushing the QB has a specific area of the field that they have to guard. 
+  
+  The data that was given had the position of each player on the field on each play with time stamps. With this we can re-create the plays and then "re-watch" them in
+  order to determine if the defense is in Man or in Zone. While this is an effective way of determining if a defense on a specific play is in Man or Zone, The data set
+  has over 19,000 plays and so doing that analysis is not feasible. That means that we need to automate the process of identifying Man or Zone. 
+  
+  One way of doing that would be to use a neural network to take the play data produce an classification of Man or Zone. The problem with a neural network is that the
+  model needs to train, validate and then test itself on datasets that have the desired variable. Those data sets would have to be very large with the only way of 
+  getting the desired variable being to manually input it into the datasets. If one were to classify enough plays to give the model enough plays to train, and test on
+  they might as well classify the rest of the plays.
+  
+  This leaves us with trying to find specific features about Man that a computer could recognize from the data. While this may seem like a daunting task because there 
+  are many different factors that go into the classification, the fact that after seeing the visualizations it was clear that certain plays were man and others were
+  zone made it clear that there were clear factors that could be inputted into a computer to calculate. After watching many plays one thing that stuck out was that 
+  in man, one player has to follow his man where as in zone he doesn't. If we can identify each of the match-ups and then compute the distance between them, then it 
+  would be sensible that we can separate the plays that have a smaller distance into man plays where as the plays with bigger distances are zone because other players 
+  can be covering that man and not necessarily the initial matchup. 
+  
+  The challenge is to determine each players matchup. This is made complicated by the defense's desire to disguise these match-ups before the snap of the ball. If they 
+  can successfully disguise coverage then it allows them to either blitz extra players or to have better coverage because the QB is unsure of where to throw the ball. 
+  
+  Our window to determine the match-ups is between when the ball is snapped to the latest possible time before the QB releases the ball. This is because after the QB 
+  releases the ball nearly every DB's responsibility changes and whatever the original scheme was is no longer apparent. To create the match-ups we need to come up 
+  with a formulated plan that we can let the computer calculate.
+  1) The DB is within 7 yards laterally and 10 yards total of the PC at the snap of the ball.
+  2) The DB is within 15 yards of the PC at either the time of the throw or the end of the play, which ever comes first.
+  3) If the DB and PC satisfy the first two conditions, then the most of the time the PC and his closest DB form a matchup. This is not always the case as sometimes at
+  least two PCs can have the same DB be the closest DB to them. This is a problem since it would imply that one DB is guarding two PCs. 
+  4) One assumption with these match-ups is that out of every combination of unique PCs and unique DBs, the match-ups have the minimum total distance out of any of 
+  those combinations. If we can minimize the total distance between PCs and DBs, than we can find the correct match-ups
+If two players had the same DB as their closest DB, then we can go through all of the other potential match-ups that the two PCs have and come up with a combination 
+that is the minimum aggregate distance while having unique DBs for each PC. 
+  5) If a PC does not satisfy the first two steps, then they are paired off with the closest remaining DB who is within 5 lateral yards and 15 total yards at the snap. 
+  6) If a PC does not have a DB that can satisfy steps 1,2,4 then they go without a matchup. 
+  
+  With these match-ups we can create the variable that measures the total distance over the course of the play between each DB and their PC. We start by taking the 
+  total distance between each matchup over the course of each play. Since the first part of the play has a lot of noise with off coverage vs. press man, we will only
+  use the second half of the play data. Next we can ignore PCs that are behind the line of scrimmage at the time of throw because while the defense may be guarding them
+  they don't always feel the need to guard them closely as a catch and a quick tackle is good enough. Since not every play has the same amount of match-ups we divide by
+  the total amount of match-ups. Lastly, we take average distance per frame because the longer a play lasts the better it is for the offense.
+  
+  If it is true that Man vs. Zone can be determined by the distance variable, then plotting a histogram of tmdff2 should produce a bi-modal distribution in which it is
+  clear which plays are man, which plays are zone, and which are a hybrid. If this were the case it would be very easy to have the computer select most of the plats
+  correctly and the ones in the gray area we could consider a hybrid.   
+  
+
+
+
+
+
+
+Analysis
+
+
+ - There is a negative coefficient that has a statistically significant value when regressing tmdff2 on epa. Which means that very close man coverage is not a good idea.
+ - This result only got slightly weaker when the time component of it was taken out the significance decreased slightly but still under .001
+ - Test out game specific situations
+      - field position
+      - time in game
+      - down
+      - distance
+ - Test the EPA of each number of eligible receivers 
+ - Quick Interceptions
+ - 
+ 
+
+
+Write a code to determine who which DB was targeted
+```{r} 
+#DB Targeted ----
+
+Plays$DBTargetted <- NA
+
+defense <- c("CB", "DB", "DE", "DL", "FS", "ILB",
+             "LB", "MLB", "NT", "OLB", "S", "SS", "DT")
+offense <- c("FB", "HB", "RB", "TE",  "WR")
+
+count <- 0
+pb <- txtProgressBar(min = 0, max = nrow(Plays), initial = 0)
+for (a in seq_len(nrow(Plays))) {
+  setTxtProgressBar(pb, a)
+  if (Plays$passResult[a] == "S"){
+    next
+  }
+
+  play <- a
+  w <- Games[which(Games$gameId == Plays[play, 1]), 6]
+  # Obtain the Dataset for that specific play
+  pd <- subset(get(paste0("week", w)),
+               playId == Plays[play, 2] & gameId == Plays[play, 1])
+  #Making sure the Dataset has an offense and a defense
+  offonfield <- intersect(offense, pd$position)
+  defonfield <- intersect(defense, pd$position)
+  oplayer <- NULL
+  dplayer <- NULL
+  for (i in 1:22){
+    if (pd$position[i] %in% offonfield) {
+      oplayer <- pd$displayName[i]
+    }else if (pd$position[i] %in% defonfield) {
+      dplayer <- pd$displayName[i]
+    }
+    }
+  if (is.null(oplayer) || is.null(dplayer)) {
+    next
+  }
+  los <- as.numeric(pd[which(pd$displayName == "Football" &
+                       pd$frameId == 1), 2]) %>% round() %>% as.integer()
+  defpd <- filter(pd, pd$position %in% defonfield |
+                   pd$displayName == "Football")
+  pdefpd <- filter(defpd, defpd$displayName != "Football")
+  if ("pass_forward" %in% pdefpd$event) {
+    throwframe <- pdefpd[which(pdefpd$event == "pass_forward"), 14]
+    throwframeId <- throwframe[1]
+  } else {
+    throwframeId <- max(pdefpd$frameId)
+  }
+  throwpd <- filter(defpd, defpd$frameId >= throwframeId)
+  throwpd$displayName <- as.character(throwpd$displayName)
+  diff <- c()
+  playerpd <- throwpd[which(throwpd$displayName != "Football"), ]
+  
+  if ("pass_arrived" %in% pd$event) {
+    ballx <- throwpd[which(throwpd$event == "pass_arrived" & throwpd$displayName == "Football"), 2]
+    bally <- throwpd[which(throwpd$event == "pass_arrived" & throwpd$displayName == "Football"), 3]
+    for (frame in min(playerpd$frameId):max(playerpd$frameId)){
+      for (i in 1:(sum(playerpd$frameId == frame))) {
+        plpd <- playerpd[which(playerpd$frameId == frame), ]
+        ydb <- plpd[i,3]
+        xdb <- plpd[i,2]
+        disball <- sqrt((xdb - ballx)^2 + (ydb - bally)^2)
+        #Finding the which way the team is going down the field
+        if (pdefpd[1,2] > los) {
+          if(xdb > los){
+            fob <- "forward"
+          } else {
+            fob <- "behind"
+          }
+        } else if (pdefpd[1, 2] < los) {
+          if (xdb < los) {
+            fob <- "forward"
+          } else {
+            fob <- "behind"
+          }}
+        diff <- rbind(diff, paste0(plpd$displayName[i], ",", disball, ",", fob))
+      }}
+    diff <- as.data.frame(diff)
+      diff <- separate(diff, V1, into = c("Player", "diffball","fob"), sep = ",")
+      diff$diff <- as.numeric(diff$diff)
+      diff <- diff[which(diff$Player != "Football" & diff$fob == "forward"),]
+      if(!(identical(diff[which.min(diff$diff),1],character(0)))){
+      Plays$DBTargetted[a] <- diff[which.min(diff$diff),1]
+    } else {
+      next
+    }
+  }else {
+    for (frame in min(playerpd$frameId):max(playerpd$frameId)){
+      ballx <- throwpd[which(throwpd$frameId == frame & throwpd$displayName == "Football"),2]
+      bally <- throwpd[which(throwpd$frameId == frame & throwpd$displayName == "Football"),3]
+      for (i in 1:(sum(playerpd$frameId == frame))) {
+        plpd <- playerpd[which(playerpd$frameId == frame),]
+        ydb <- plpd[i,3]
+        xdb <- plpd[i,2]
+        disball <- sqrt((xdb - ballx)^2 + (ydb - bally)^2)
+        #Finding the which way the team is going down the field
+        if (pdefpd[1,2] > los) {
+          if(xdb > los){
+            fob <- "forward"
+          } else {
+            fob <- "behind"
+          }
+        } else if (pdefpd[1,2] < los) {
+          if (xdb < los) {
+            fob <- "forward"
+          } else {
+            fob <- "behind"
+          }}
+        diff <- rbind(diff, paste0(plpd$displayName[i], ",", disball, ",", fob))
+      }}
+    diff <- as.data.frame(diff)
+
+      diff <- separate(diff, V1, into = c("Player", "diffball","fob"), sep = ",")
+      diff$diff <- as.numeric(diff$diff)
+      diff <- diff[which(diff$Player != "Football" & diff$fob == "forward"),]
+      if(!(identical(diff[which.min(diff$diff),1],character(0)))){
+      Plays$DBTargetted[a] <- diff[which.min(diff$diff),1]
+    } else {
+      next
+    }
+  }
+}
+
+sum(is.na(Plays$DBTargetted))
+
+```
+
+
+
+Determining the route combination for each play
+```{r} 
+# Route Combinations ----
+gameid <- unique(Plays$gameId)
+routecombo <- c()
+Plays$routes <- NA
+pb <- txtProgressBar(min = 0, max = 17, initial = 0)
+for (i in 1:17) {
+  setTxtProgressBar(pb, i)
+  week <- get(paste0("week", i))
+  week$route <- as.character(week$route)
+for (game in gameid) {
+  specgame <- subset(week, week$gameId == game)
+  playid <- unique(specgame$playId)
+  for (play in playid) {
+    singleframe <- week[which(week$playId == play &
+                        week$gameId == game & week$frameId == 1), ]
+    #Making the routes go from right to left on the field
+    ttbsf <- singleframe[order(singleframe$y),]
+    routecombo <- concat(ttbsf$route[!(ttbsf$route == "")])
+    Plays$routes[which(Plays$playId == play & Plays$gameId == game)] <- routecombo  # nolint
+  }
+}
+}
+```
+
+
+
+Putting in the team on Defense
+```{r}
+#Putting in the team on Defense ----
+games <- unique(Games$gameId)
+Plays$defteam <- NA
+
+teams <- c()
+
+for(game in games){
+  teams <- rbind(teams, Games[which(Games$gameId == game), c(1, 4, 5)])
+}
+
+
+for (i in seq_len(nrow(Plays))){
+  gmid <- Plays$gameId[i]
+  tms <- teams[which(teams$gameId == gmid), ]
+  for (j in 2:3){
+    if (tms[j] %in% Plays$possessionTeam[i]) {
+      next
+    }else {
+        Plays$defteam[i] <- as.character(tms[j])
+      }
+  }
+}
+```
+
+
+
+
+Matchup Distances
+```{r, warning = False, message = False}
+#Creating the Matchups and other things----
+#All of the Offensive and Defensive positions in the week to week datasets
+defense <- c("CB", "DB", "DE", "DL", "FS",
+             "ILB", "LB", "MLB", "NT", "OLB", "S", "SS", "DT")
+offense <- c("FB", "HB", "RB", "TE",  "WR")
+
+Plays$tmdff2 <- NA
+pb <- txtProgressBar(min = 0, max = nrow(Plays), initial = 0)
+for (a in seq_len(nrow(Plays))){
+  setTxtProgressBar(pb, a)
+  play <- a
+
+  # Calculate the week the play happened
+  w <- Games[which(Games$gameId == Plays[play, 1]), 6]
+  # Obtain the Dataset for that specific play
+  pd <- subset(get(paste0("week", w)),
+                playId == Plays[play, 2] & gameId == Plays[play, 1])
+  #Finding the Line of Scrimmage
+  los <- as.numeric(pd[which(pd$displayName == "Football" &
+                       pd$frameId == 1), 2]) %>% round() %>% as.integer()
+  pd <- subset(pd, displayName != "Football")
+  #Figure out if the loop is worth running
+  #Cut down on operations the computer has to do
+  defonfield <- intersect(defense, pd$position)
+  offonfield <- intersect(offense, pd$position)
+  #Making sure the Dataset has an offense and a defense
+  oplayer <- NULL
+  dplayer <- NULL
+  for (i in 1:22){
+    if (pd$position[i] %in% offonfield) {
+      oplayer <- pd$displayName[i]
+    }else if (pd$position[i] %in% defonfield) {
+      dplayer <- pd$displayName[i]
+    }
+    }
+  if (is.null(oplayer) || is.null(dplayer)) {
+    next
+  }
+  #Get the dataset at the latest relevant moment in coverage
+  if ("pass_forward" %in% pd$event) {
+    coverage <- pd[which(pd$event == "pass_forward"),
+                   c(2, 3, 9, 11, 12, 13, 14)]
+    coverage <- coverage[which(coverage$frameId == max(coverage$frameId)),]
+    coverage <- coverage[!duplicated(coverage), ]
+  } else {
+    coverage <- pd[which(pd$frameId == max(pd$frameId)),
+                         c(2, 3, 11, 12, 13, 14)]
+    coverage <- coverage[!duplicated(coverage), ]
+  }
+  throwframe <- max(coverage$frameId)
+  # Data of that Play before the snap
+  if ("ball_snap" %in% pd$event) {
+    snap <- pd[which(pd$event == "ball_snap"), c(2, 3, 9, 11, 12, 13, 14)]
+    snap <- snap[which(snap$frameId == max(snap$frameId)), ]
+    snap <- snap[!duplicated(snap), ]
+  }else{
+    snap <- snap[which(snap$frameId == min(snap$frameId)), ]
+    snap <- snap[!duplicated(snap), ]
+  }
+  #Factor to Character for convenience
+  coverage$displayName <- as.character(coverage$displayName)
+  # Creating potential match-ups
+  Matchups <- c()
+  pc <- 0
+  for (i in seq_len(nrow(snap))){
+    odp <- c()
+    mu <- c()
+    if (snap$position[i] %in% offonfield) {
+      snapypc <- snap[i, 2]
+      snapxpc <- snap[i, 1]
+      for (j in seq_len(nrow(snap))){
+        if (snap$position[j] %in% defonfield){
+          snapxdb <- snap[j, 1]
+          snapydb <- snap[j, 2]
+          snapydiff <- abs(snapydb - snapypc)
+          snapdiff <- sqrt((snapxdb - snapxpc)^2 + (snapydb - snapypc)^2)
+          if (i <= nrow(coverage)) {
+            covypc <- coverage[i, 2]
+            covxpc <- coverage[i, 1]
+            covxdb <- coverage[j, 1]
+            covydb <- coverage[j, 2]
+            covdiff <- sqrt((covxdb - covxpc)^2 + (covydb - covypc)^2)
+            #Finding the which way the team is going down the field
+            if (pd[which(pd$displayName == oplayer &
+                   pd$frameId == 1), 2] > los) {
+              if(covxpc > los) {
+                fob <- "behind"
+              } else {
+                fob <- "forward"
+              }
+            } else if (pd[which(pd$displayName == oplayer &
+                          pd$frameId == 1), 2] < los) {
+              if (covxpc < los) {
+                fob <- "behind"
+              } else {
+                fob <- "forward"
+              }
+              }
+          }
+
+          odp <- rbind(odp,
+                       paste0(coverage$displayName[i], ",",
+                              coverage$position[i], ",",
+                              coverage$displayName[j], ",",
+                              coverage$position[j], ",",
+                              snapydiff, ",",
+                              snapdiff, ",",
+                              covdiff, ",",
+                              covxpc, ",",
+                              fob, ",",
+                              paste(coverage$jerseyNumber[i],
+                                    "v", coverage$jerseyNumber[j])))
+          odp <- as.data.frame(odp, stringsAsFactors = FALSE)
+        }
+        }
+      if (is.character(odp$V1)) {
+        pc <- pc + 1
+        odp <- separate(odp, V1, into = c("O Name", "O Position", "D Name",
+                                          "D Position", "snapydiff", "snapdiff",
+                                          "covdiff", "covxpc", "fob",
+                                          "num_v_num"), sep = ",")
+        odp$snapydiff <- as.numeric(odp$snapydiff)
+        odp$snapdiff <- as.numeric(odp$snapdiff)
+        odp$covdiff <- as.numeric(odp$covdiff)
+        odp <- odp[order(odp$covdiff, decreasing = FALSE), ]
+        row.names(odp) <- NULL
+        assign(paste0("mu", pc), odp)
+      }
+    }
+    }
+
+# ----
+  #Correcting the matchups so that the overall distance between DB and PC
+  # is minized. This takes away from the possibility that a DB would be
+  # considered to be covering a player because he happened to run near him.
+
+  # Matching PC's and DB's dist <= 15
+  for (i in 1:pc) {
+    #in loop variable
+    mui <- get(paste0("mu", i))
+    # Narrow down the possible defenders to within 15 yards at the snap and
+    # at the throw or end of play
+    mui <- mui[which(mui$snapydiff <= 7 &
+               mui$snapdiff <= 10 & mui$covdiff <= 15), ]
+    for (j in 1:pc){
+      #in loop variable
+      muj <- get(paste0("mu", j))
+      #Narrow down the possible defenders to within 15 yards at the snap
+      #and at the throw or end of play
+      muj <- muj[which(mui$snapydiff <= 7 &
+                       mui$snapdiff <= 10 & mui$covdiff <= 15), ]
+      #filter out the players that had no clear defenders
+      if (!is.na(mui$"D Name"[1]) && !is.na(muj$"D Name"[1])) {
+        # make sure that we are comparing different datasets
+        if (i < j){
+          totdis <- c()
+          for (k in seq_len(nrow(mui))) {
+            for (l in seq_len(nrow(muj))) {
+              if (mui$"D Name"[k] != muj$"D Name"[l]) {
+                totdis <- rbind(totdis,
+                                paste(sum(mui$covdiff[k], muj$covdiff[l]), ",",
+                                      i, ",", j, ",", k, ",", l, ",",
+                                      mui$"D Name"[k], ",", muj$"D Name"[l]))
+              }
+              }
+              }
+          totdis <- as.data.frame(totdis, stringsAsFactors = FALSE)
+          if (!(is.null(totdis$"V1"[1]))) {
+            totdis <- separate(totdis, V1,
+                               c("sum", "i", "j", "k", "l", "name1", "name2"),
+                               sep = " , ")
+            for (column in 1:5){
+              totdis[, column] <- as.numeric(totdis[, column])
+            }
+            totdis <- totdis[which.min(totdis$sum), ]
+            if (totdis$k != 1) {
+              mui <- mui[-1, ]
+            } else if (totdis$l != 1) {
+              muj <- muj[-1, ]
+              Matchups <- rbind(Matchups, muj[1, ])
+            }
+            if (!is.na(mui$"D Name"[1])) {
+              Matchups <- rbind(Matchups, mui[1, ])
+            }
+          }
+
+        }
+      }
+    }
+    if (i == pc) {
+      if (!is.na(mui$"D Name"[1])) {
+              Matchups <- rbind(Matchups, mui[1, ])
+      }
+      }
+    }
+
+  for (i in 1:pc){
+    x <- 0
+    mui <- get(paste0("mu", i))
+    mui <- mui[which(mui$snapdiff <= 15 | mui$snapydiff <= 5), ]
+    if (!(mui$`O Name`[1] %in% Matchups$`O Name`)) {
+      mui <- mui[order(mui$snapydiff, decreasing = FALSE), ]
+      for (j in seq_len(nrow(mui)))
+        if (!(is.na(mui$`O Name`[1]))) {
+          if (!(mui$`D Name`[j] %in% Matchups$`D Name`) && x < 1) {
+            x <- x + 1
+            Matchups <- rbind(Matchups, mui[j, ])
+          }
+        }
+    }
+  }
+
+  Matchups <- as.data.frame(Matchups)
+  Matchups <- Matchups[!duplicated(Matchups$"D Name"), ]
+  Matchups <- Matchups[!duplicated(Matchups$"O Name"), ]
+
+  #Graphing the distance of each of the matchups over time
+  distances <- c()
+
+  for(i in seq_len(nrow(Matchups))) {
+    for (frame in 1:throwframe) {
+      xoff <- pd[which(pd$displayName == Matchups[i, 1] &
+                 pd$frameId == frame), 2]
+      yoff <- pd[which(pd$displayName == Matchups[i, 1] &
+                 pd$frameId == frame), 3]
+      xdef <- pd[which(pd$displayName == Matchups[i, 3] &
+                 pd$frameId == frame), 2]
+      ydef <- pd[which(pd$displayName == Matchups[i, 3] &
+                 pd$frameId == frame), 3]
+      distance <- sqrt((xdef - xoff)^2 + (ydef - yoff)^2)
+      distances <- append(distances,
+                          paste0(distance, ",", frame, ",",
+                          Matchups[i, 9], ",", Matchups[i, 10]))
+    }
+    }
+  distances <- as.data.frame(distances)
+  distances <- separate(distances, distances,
+                        into = c("distances","frame","fob","num_v_num"),
+                        sep = ",")
+  distances$frame <- as.numeric(distances$frame)
+  distances$distances <- as.numeric(distances$distances)
+  distances$num_v_num <- as.character(distances$num_v_num)
+
+  Plays$tmdff2[a] <- sum(distances[which(distances$fob == "forward" &
+                         distances$frame > max(distances$frame)/2),1])/
+                         (nrow(Matchups) * max(distances$frame)/2)
+
+Plays$tmdff2 <- as.numeric(Plays$tmdff2)
+```
+
+
+```{r}
+#Finding the distance to the end-zone at the start of the play
+Plays$ydstoTD <- NA
+for (n in 1:nrow(Plays)){
+  if (Plays$possessionTeam[n] == Plays$yardlineSide[n]){
+    Plays$ydstoTD[n] <- abs(100 - Plays$yardlineNumber[n])
+  } else  {
+    Plays$ydstoTD[n] <- Plays$yardlineNumber[n]
+  }
+}
+```
+
+
+
+
+
+Saving the important New Variables
+```{r}
+#Saving the work ----
+Plays1 <- Plays
+write.csv(Plays1,"Plays1.csv", row.names = F)
+```
+
+
+
+
+Separating out the offense and defense and Play Action
+```{r}
+#Discarding Non Standard Packages----   
+standardOPlays <- Plays
+standardDPlays <- Plays
+offense <- c("QB","RB","WR", "TE", "OL")
+dst <- c("P","K","DL","DB","LB","2 QB")
+for (pos in dst){
+  standardOPlays <- as.data.frame(subset(standardOPlays, grepl(pos,standardOPlays$personnelO) == 0))
+}
+for (pos in offense){
+  standardDPlays <- as.data.frame(subset(standardDPlays, grepl(pos,standardDPlays$personnelD) == 0))
+}
+
+standardPlays <- intersect(standardOPlays,standardDPlays)
+
+nrow(standardPlays)
+
+```
+
+Plot in a distribution plot the aggregate distances from the Matchups
+
+
+```{r}
+#Plotting the Distance Variable in Totality---- 
+normalpassplay <- c( "TRADITIONAL", "SCRAMBLE_ROLLOUT_LEFT", "SCRAMBLE_ROLLOUT_RIGHT", "SCRAMBLE")
+
+#Standard Pass Plays no pass interference with no designed roll-out
+spnpnor <- filter(standardPlays, isDefensivePI == F & typeDropback %in% normalpassplay)
+
+#Standard Pass Plays no pass interference, distance variable < 12
+spnpnor12 <- filter(spnpnor, tmdff2 < 12)
+
+for (i in 1:2){
+  if (i == 1) {
+    g <- ggplot(spnpnor12,aes(x = tmdff2, y = epa, color = numberOfPassRushers))+
+      geom_point() +
+      geom_smooth()+
+      scale_color_gradient2(midpoint = max(standardPlaysnonp$numberOfPassRushers)/2, low = "blue", mid = "white", high = "red")+
+      xlim(0,12) +
+      labs(title = "Matchup Distance vs. EPA",
+           x = "Average Distance Per Matchup and Frame",
+           y = "Expected Points Added") 
+      print(g)
+  } else {
+    g <- ggplot(spnpnor12,aes(x = tmdff2, y = epa, color = numberOfPassRushers))+
+      geom_smooth()+
+      scale_color_gradient2(midpoint = max(standardPlaysnonp$numberOfPassRushers)/2, low = "blue", mid = "white", high = "red")+
+      xlim(0,12) +
+      labs(title = "Matchup Distance vs. EPA",
+           x = "Average Distance Per Matchup and Frame",
+           y = "Expected Points Added") 
+      print(g)
+  } 
+}
+```
+
+
+```{r}
+
+ggplot(spnpnor12,aes(x = tmdff2, y = epa, color = passResult))+
+  geom_smooth()+
+  
+  #scale_color_gradient2(midpoint = max(standardPlaysnonp$numberOfPassRushers)/2, low = "blue", mid = "white", high = "red")+
+  xlim(0,12) +
+  labs(title = "Matchup Distance vs. EPA",
+       x = "Average Distance Per Matchup and Frame",
+       y = "Expected Points Added") 
+```
+
+
+```{r}
+# Graphing the Distance for each play ----
+
+normalpassplay <- c( "TRADITIONAL", "SCRAMBLE_ROLLOUT_LEFT", "SCRAMBLE_ROLLOUT_RIGHT", "SCRAMBLE")
+
+normalPlays <- filter(Plays, isDefensivePI == F, typeDropback %in% normalpassplay)
+
+rolloutPlays <- filter(Plays, isDefensivePI == F, !(typeDropback %in% normalpassplay))
+
+tightcov <- filter(standardPlays, tmdf2 < 90 & isDefensivePI == F, typeDropback %in% normalpassplay)
+cov <- filter(standardPlays, tmdf2 > 25 & tmdf2 < 100 & isDefensivePI == F, typeDropback %in% normalpassplay)
+loosecov <- filter(standardPlays, tmdf2 > 240 & isDefensivePI == F, typeDropback %in% normalpassplay)
+
+
+
+```
+
+
+
+
+
+
+```{r}
+#Regressions ----
+bptest(epa ~ tmdf2 + numberOfPassRushers + timeingame, data = normalPlays)
+reg <- lm(epa ~ tmdff2 + numberOfPassRushers + timeingame, data = normalPlays)
+coeftest(reg, vcov. = vcovHC(reg, type = "HC1"))
+```
+
+
+
+```{r}
+bptest(epa ~ tmdf2 + numberOfPassRushers + timeingame, data = rolloutPlays)
+reg <- lm(epa ~ tmdff2 + numberOfPassRushers + timeingame, data = rolloutPlays)
+coeftest(reg, vcov. = vcovHC(reg, type = "HC1"))
+```
+
+
+
+
+```{r}
+
+  ggplot(data = normalPlays, aes(x = tmdff2, y = epa)) +
+    geom_smooth(data = filter(normalPlays, quarter == 1), color = "green")+
+    geom_smooth(data = filter(normalPlays, quarter == 2), color = "blue")+
+    geom_smooth(data = filter(normalPlays, quarter == 3), color = "yellow")+
+    geom_smooth(data = filter(normalPlays, quarter == 4), color = "red")+
+    geom_smooth(data = filter(normalPlays, quarter == 5), color = "black")+
+    #geom_point()+
+    #scale_color_gradient2(midpoint = 4, low = "green", mid = "blue", high = "red")+
+    ggtitle(paste("By Quarter")) +
+    xlim(0,12) 
+
+
+```
+
+
+
+
+
+```{r}
+# Finding every play that each team played on defense
+#team <- unique(Plays$defteam)[floor(runif(1, min = 1, max = length(unique(Plays$defteam))))]
+#for (team in unique(Plays$defteam)){
+  g <- ggplot(data = filter(standardPlays, defteam == "IND"), aes(x = tmdf2, y = epa, color = numberOfPassRushers)) +
+    #geom_point() +
+    geom_smooth()+
+    geom_smooth(data = filter(standardPlays, defteam == "ARI"), color = "red")+
+    scale_color_gradient2(midpoint = 4, low = "green", mid = "blue", high = "red")+
+    xlim(0,160) +
+    ylim(-.9,.5) +
+    ggtitle("IND","ARI")
+  print(g)
+#}
+
+```
+
+
+
+
+
+```{r}
+
+# Players specific chart
+
+ptar <- unique(Plays$DBTargetted)
+
+length(unique(Plays$DBTargetted))
+
+x <- 0
+for (player in ptar){
+  playergames <- unique(allweeks[which(allweeks$displayName == player),16])
+  if (length(playergames) > 14){
+  x <- x + 1
+  }
+  }
+x
+
+
+
+for (player in ptar){
+  playergames <- unique(allweeks[which(allweeks$displayName == player),16])
+  if (length(playergames) > 14){
+    for (i in 1:length(playergames)){
+      g <- ggplot(filter(standardPlays, gameId == playergames[i]), aes(x = tmdf2, y = epa, color = numberOfPassRushers))+
+        geom_point() +
+        geom_smooth()+
+        scale_color_gradient2(midpoint = max(Plays$numberOfPassRushers)/2, low = "blue", mid = "white", high = "red")+
+        xlim(0,250) +
+        ggtitle(player)
+      print(g)
+    }
+  }
+}
+
+```
+
+
+
+
+
+```{r}
+  
+  
+filter(standardPlays, passResult == "S" & isDefensivePI == F) %>%
+  group_by(defteam) %>%
+  summarise(n=n()) %>%
+  ggplot(aes(x = defteam, y = n, fill = defteam))+ 
+    geom_bar(stat = "identity")
+
+filter(standardPlays, passResult == "IN" & isDefensivePI == F) %>%
+  group_by(defteam) %>%
+  summarise(n=n()) %>%
+  ggplot(aes(x = defteam, y = n, fill = defteam))+ 
+    geom_bar(stat = "identity")
+
+spnpnor12
+
+```
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Player Speed
+
+```{r}
+#Player Speed----  
+playersonly <- c()
+for (i in 1:17){ 
+  playersonlydata <- rbind(playersonly, subset(get(paste0("week",i)), displayName != "Football"))
+}
+
+
+
+playersonly %>%
+  groupby(displayName) %>%
+  summarise(topspeed = max(s))
+
+byplayer <- group_by(playersonly,displayName)
+topspeeds <- summarise(byplayer, 
+                       Speed = max(s))
+head(topspeeds,5)
+nrow(playersonly)
+```
+
+
+
+```{r}
+#Plotting Player Speed----
+ggplot(topspeeds, aes(x = speed))+
+  geom_histogram()
+
+```
+
+We can see if a player has statistically significant difference from another player
+```{r}
+#Acceleration and Speed difference testing----
+realdifferenceplayers <- function(n){
+  #Grab all the games that the players have been in
+  Players$displayName <- as.character(Players$displayName)
+  player <- Players$displayName[n]
+  print(player)
+  weeks <- c()
+  for (w in 1:17) {
+    weeks <- rbind(weeks, get(paste0("week",w)))
+    }
+  print(summary(weeks))
+  nrow(weeks)
+  pgd <- subset(weeks, displayName == player, frame == 1)
+
+  gms <- unique(pgd$gameId)
+  for (game in gms){
+    d1 <- filter(pgd, gameId == game)
+    d2 <- filter(pgd, gameId != game)
+    t.test(d1$a, d2$a, paired = T)
+    }
+}
+``` 
+
+
+
+
+
+
