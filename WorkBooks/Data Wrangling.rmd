@@ -54,6 +54,20 @@ for (i in 1:17){
 }
 ```
 
+```{r}
+rows <- c()
+for (i in 1:17) {
+  rows <- c(rows, nrow(get(paste0("week", i))))
+
+}
+print(rows)
+sum(rows)
+```
+
+```{r}
+nrow(plays)
+```
+
 Since players were reaching speeds of 40+ yds/s which is ~ 80 mph it was clear that this was not real data that anything could be gleaned from.
 ```{r Clean up}
 
